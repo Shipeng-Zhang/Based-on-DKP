@@ -98,10 +98,11 @@ def cmc(distmat, query_ids=None, gallery_ids=None,
     return ret.cumsum() / num_valid_queries
 
 
+# 用来计算mAP
 def mean_ap(distmat, query_ids=None, gallery_ids=None,
             query_cams=None, gallery_cams=None):
-    distmat = to_numpy(distmat)
-    m, n = distmat.shape
+    distmat = to_numpy(distmat) # 距离矩阵转换为numpy
+    m, n = distmat.shape # m:查询集样本数量 n:画廊集样本数量
     # Fill up default values
     if query_ids is None:
         query_ids = np.arange(m)
@@ -112,26 +113,26 @@ def mean_ap(distmat, query_ids=None, gallery_ids=None,
     if gallery_cams is None:
         gallery_cams = np.ones(n).astype(np.int32)
     # Ensure numpy array
-    query_ids = np.asarray(query_ids)
-    gallery_ids = np.asarray(gallery_ids)
-    query_cams = np.asarray(query_cams)
-    gallery_cams = np.asarray(gallery_cams)
+    query_ids = np.asarray(query_ids) # 转换为numpy数组
+    gallery_ids = np.asarray(gallery_ids) # 转换为numpy数组
+    query_cams = np.asarray(query_cams) # 转换为numpy数组
+    gallery_cams = np.asarray(gallery_cams) # 转换为numpy数组
     # Sort and find correct matches
-    indices = np.argsort(distmat, axis=1)
-    matches = (gallery_ids[indices] == query_ids[:, np.newaxis])
+    indices = np.argsort(distmat, axis=1) # 按行排序，返回排序后的索引
+    matches = (gallery_ids[indices] == query_ids[:, np.newaxis]) # 生成匹配矩阵，查询集ID与画廊集ID相等的位置为True，否则为False
     # Compute AP for each query
     aps = []
     for i in range(m):
         # Filter out the same id and same camera
         valid = ((gallery_ids[indices[i]] != query_ids[i]) |
-                 (gallery_cams[indices[i]] != query_cams[i]))
-        y_true = matches[i, valid]
-        y_score = -distmat[i][indices[i]][valid]
+                 (gallery_cams[indices[i]] != query_cams[i])) # 相机不相同或pid不相同的位置为True
+        y_true = matches[i, valid] # 取出有效的匹配结果
+        y_score = -distmat[i][indices[i]][valid] # 取出有效的距离值，取负数是因为距离越小表示越相似
         if not np.any(y_true): continue
-        aps.append(average_precision_score(y_true, y_score))
+        aps.append(average_precision_score(y_true, y_score)) # 计算平均精度并添加到列表中
     if len(aps) == 0:
         raise RuntimeError("No valid query")
-    return np.mean(aps)
+    return np.mean(aps) # 返回所有查询的平均AP
 
 
 def mean_ap_cuhk03(distmat, query_ids=None, gallery_ids=None,

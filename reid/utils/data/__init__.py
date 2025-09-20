@@ -15,10 +15,10 @@ class IterLoader:
             return self.length
         return len(self.loader)
 
-    def new_epoch(self):
+    def new_epoch(self): # 重置迭代器
         self.iter = iter(self.loader)
 
-    def next(self):
+    def next(self): # 获取下一个batch的数据
         try:
             return next(self.iter)
         except:

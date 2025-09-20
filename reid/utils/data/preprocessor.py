@@ -15,24 +15,24 @@ class Preprocessor(Dataset):
         self.transform = transform
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.dataset) # 返回数据集的大小
 
     def __getitem__(self, indices):
-            return self._get_single_item(indices)
+            return self._get_single_item(indices) 
 
     def _get_single_item(self, index):
         # print(self.dataset)
         try:
-            fname, pid, camid, domain = self.dataset[index]
+            fname, pid, camid, domain = self.dataset[index] # dataset中的每个元素包含 (img_path, pid, camid, domain-id)
         except:
-            fname, pid, camid, domain, _ = self.dataset[index]
-        fpath = fname
+            fname, pid, camid = self.dataset[index]
+        fpath = fname # 图像路径
         if self.root is not None:
-            fpath = osp.join(self.root, fname)
+            fpath = osp.join(self.root, fname) # 如果提供了根目录，则将其与图像路径连接起来
 
-        img = Image.open(fpath).convert('RGB')
+        img = Image.open(fpath).convert('RGB') # 打开图像并转换为RGB格式
 
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(img) # 对图像进行预处理
 
-        return img, fname, pid, camid, domain
+        return img, fname, pid, camid # 返回图像张量, 图像路径, 行人ID, 相机ID

@@ -61,65 +61,65 @@ class Normalize(nn.Module):
 
 class ResNetSimCLR(nn.Module):
     def __init__(self, base_model='resnet50', out_dim=2048, n_sampling=2, pool_len=8, normal_feature=True,
-                 num_classes=500, uncertainty=False):
+                 num_classes=500, uncertainty=False): # num_classes 分类的类别数量 # uncertainty 是否使用不确定性 # n_sampling 不确定性采样的数量 
         super(ResNetSimCLR, self).__init__()   
        
-        self.resnet_dict = {"resnet18": models.resnet18(pretrained=False, num_classes=out_dim),
+        self.resnet_dict = {"resnet18": models.resnet18(pretrained=False, num_classes=out_dim), 
                             "resnet50": models.resnet50(pretrained=True)}
-        self.resnet = self._get_basemodel(base_model)
-        self.base = nn.Sequential(*list(self.resnet.children())[:-3])
-        dim_mlp = self.resnet.fc.in_features//2
-        self.linear_mean =nn.Linear(dim_mlp, out_dim)
-        self.linear_var = nn.Linear(dim_mlp, out_dim)
-        self.pool_len = 8
-        self.conv_var =  nn.Conv2d(dim_mlp, dim_mlp, kernel_size=(pool_len,pool_len),bias=False)
+        self.resnet = self._get_basemodel(base_model) # 选择基础模型
+        self.base = nn.Sequential(*list(self.resnet.children())[:-3]) # 去掉最后的三层，保留到layer3
+        dim_mlp = self.resnet.fc.in_features//2 # 2048//2=1024
+        self.linear_mean =nn.Linear(dim_mlp, out_dim) # 全连接层，将1024维映射到2048维
+        self.linear_var = nn.Linear(dim_mlp, out_dim) # 全连接层，将1024维映射到2048维
+        self.pool_len = 8 # 特征图的宽度和高度
+        self.conv_var =  nn.Conv2d(dim_mlp, dim_mlp, kernel_size=(pool_len,pool_len),bias=False) # 卷积层，感受野为8x8
 
-        self.n_sampling = n_sampling
-        self.n_samples = torch.Size(np.array([n_sampling, ]))
-        self.pooling_layer = GeneralizedMeanPoolingP(3)
+        self.n_sampling = n_sampling # 不确定性采样的数量
+        self.n_samples = torch.Size(np.array([n_sampling, ])) # 转换为torch.Size类型
+        self.pooling_layer = GeneralizedMeanPoolingP(3) # GeM池化层，p=3
 
-        self.l2norm_mean, self.l2norm_var, self.l2norm_sample = Normalize(2, 1), Normalize(2, 1), Normalize(2, 2)
+        self.l2norm_mean, self.l2norm_var, self.l2norm_sample = Normalize(2, 1), Normalize(2, 1), Normalize(2, 2) # L2归一化层 
 
         print('using resnet50 as a backbone')
         '''xkl add'''
         print("##########normalize matchiing feature:", normal_feature)
-        self.normal_feature = normal_feature
-        self.uncertainty = uncertainty
+        self.normal_feature = normal_feature # 是否对采样的特征进行L2归一化
+        self.uncertainty = uncertainty # 是否使用不确定性
 
-        self.bottleneck = nn.BatchNorm2d(out_dim)
-        self.bottleneck.bias.requires_grad_(False)
-        nn.init.constant_(self.bottleneck.weight, 1)
-        nn.init.constant_(self.bottleneck.bias, 0)
+        self.bottleneck = nn.BatchNorm2d(out_dim) # 批归一化层
+        self.bottleneck.bias.requires_grad_(False) # bias不更新
+        nn.init.constant_(self.bottleneck.weight, 1) # weight初始化为1
+        nn.init.constant_(self.bottleneck.bias, 0) # bias初始化为0
 
-        self.classifier = nn.Linear(out_dim, num_classes, bias=False)
-        nn.init.normal_(self.classifier.weight, std=0.001)
-        self.relu = nn.ReLU()    
+        self.classifier = nn.Linear(out_dim, num_classes, bias=False) # 分类器，全连接层
+        nn.init.normal_(self.classifier.weight, std=0.001) # 分类器权重初始化
+        self.relu = nn.ReLU()  # ReLU激活函数
 
     def _get_basemodel(self, model_name):
-        model = self.resnet_dict[model_name]
-        return model
+        model = self.resnet_dict[model_name] # 获取基础模型
+        return model    
 
     def forward(self, x, training_phase=None, fkd=False):
-        BS = x.size(0)
+        BS = x.size(0) # 取出batch size
         
-        out = self.base(x)  # former 3 blockes of resnet 50
-        out_mean = self.pooling_layer(out)  # global pooling
-        out_mean = out_mean.view(out_mean.size(0), -1)  # B x 1024
-        out_mean = self.linear_mean(out_mean)  # Bx2048
+        out = self.base(x)  # 用基础模型提取特征，输出特征图大小为(BS, 1024, 8, 4) (batch_size, channels, height, width)
+        out_mean = self.pooling_layer(out)  # global pooling (BS, 1024, 1, 1)
+        out_mean = out_mean.view(out_mean.size(0), -1)  # B x 1024 # 展平为(BS, 1024)
+        out_mean = self.linear_mean(out_mean)  # Bx2048 # 全连接层映射为(BS, 2048)
         # out_mean = self.l2norm_mean(out_mean)  # L2norm
 
-        out_var = self.conv_var(out)  # conv layer
-        out_var = self.pooling_layer(out_var)  # pooling
-        out_var += 1e-4
-        out_var = out_var.view(out_var.size(0), -1)  # Bx1024
-        out_var = self.linear_var(out_var)  # Bx2049
+        out_var = self.conv_var(out)  # conv layer (BS, 1024, 1, 1)
+        out_var = self.pooling_layer(out_var)  # pooling (BS, 1024, 1, 1)
+        out_var += 1e-4 
+        out_var = out_var.view(out_var.size(0), -1)  # Bx1024 # 展平为(BS, 1024)
+        out_var = self.linear_var(out_var)  # Bx2049 # 全连接层映射为(BS, 2048)
 
-        out_mean=self.l2norm_mean(out_mean)
+        out_mean=self.l2norm_mean(out_mean) # L2norm
         
         var_choice = 'L2'
         if var_choice == 'L2':
-            out_var = self.l2norm_var(out_var)
-            out_var = self.relu(out_var)+ 1e-4
+            out_var = self.l2norm_var(out_var) # L2norm
+            out_var = self.relu(out_var)+ 1e-4 # ReLU激活函数，确保方差为正
         elif var_choice == 'softmax':
             out_var = F.softmax(out_var, dim=1)# Bx2049
             out_var = out_var.clone()  # gradient computation error would occur without this line
@@ -127,19 +127,19 @@ class ResNetSimCLR(nn.Module):
             out_var=torch.exp(0.5 * out_var)
            
         if self.uncertainty:
-            BS,D=out_mean.size()                
-            tdist = MultivariateNormal(loc=out_mean, scale_tril=torch.diag_embed(out_var))
-            samples = tdist.rsample(self.n_samples)  # (n_samples, batch_size, out_dim)
+            BS,D=out_mean.size()   # 取出batch size和特征维度              
+            tdist = MultivariateNormal(loc=out_mean, scale_tril=torch.diag_embed(out_var)) # 构建多元正态分布，均值为out_mean，协方差矩阵为对角矩阵，元素为out_var
+            samples = tdist.rsample(self.n_samples)  # (n_samples, batch_size, out_dim) # 多次采样
 
             # if self.normal_feature:
-            samples = self.l2norm_sample(samples)
+            samples = self.l2norm_sample(samples) # L2norm
 
-            merge_feat = torch.cat((out_mean.unsqueeze(0), samples), dim=0)  # (n_samples+1,batchsize, out_dim)
+            merge_feat = torch.cat((out_mean.unsqueeze(0), samples), dim=0)  # (n_samples+1,batchsize, out_dim) # 将均值和采样的特征拼接在一起
             merge_feat = merge_feat.resize(merge_feat.size(0) * merge_feat.size(1),
-                                           merge_feat.size(-1))  # ((n_samples+1)*batchsize, out_dim)
+                                           merge_feat.size(-1))  # ((n_samples+1)*batchsize, out_dim) # 展平为((n_samples+1)*batchsize, out_dim)
             bn_feat = self.bottleneck(
                 merge_feat.unsqueeze(-1).unsqueeze(-1))  # [(n_samples+1)*batchsize, out_dim, 1, 1]
-            cls_outputs = self.classifier(bn_feat[..., 0, 0])  # [(n_samples+1)*batchsize, num_classes]
+            cls_outputs = self.classifier(bn_feat[..., 0, 0])  # [(n_samples+1)*batchsize, num_classes] # 分类器输出
 
             merge_feat = merge_feat.resize(self.n_sampling + 1, BS,
                                            merge_feat.size(-1))  # (n_samples+1,batchsize, out_dim)

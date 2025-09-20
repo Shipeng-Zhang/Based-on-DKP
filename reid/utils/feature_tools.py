@@ -10,6 +10,7 @@ import collections
 import numpy as np
 import copy
 
+# 提取特征的通用函数
 def extract_features(model, data_loader):
     features_all = []
     labels_all = []
@@ -17,7 +18,7 @@ def extract_features(model, data_loader):
     camids_all = []
     model.eval()
     with torch.no_grad():
-        for i, (imgs, fnames, pids, cids, domains) in enumerate(data_loader):
+        for i, (imgs, fnames, pids, cids) in enumerate(data_loader):
             features = model(imgs)
             for fname, feature, pid, cid in zip(fnames, features, pids, cids):
                 features_all.append(feature)
@@ -27,15 +28,22 @@ def extract_features(model, data_loader):
     model.train()
     return features_all, labels_all, fnames_all, camids_all
 
-
+# 用于类中心初始化分类器的权重
 def initial_classifier(model, data_loader):
-    pid2features = collections.defaultdict(list)
-    features_all, labels_all, fnames_all, camids_all = extract_features(model, data_loader)
-    for feature, pid in zip(features_all, labels_all):
-        pid2features[pid].append(feature)
-    class_centers = [torch.stack(pid2features[pid]).mean(0) for pid in sorted(pid2features.keys())]
-    class_centers = torch.stack(class_centers)
-    return F.normalize(class_centers, dim=1).float().cuda()
+    pid2features = collections.defaultdict(list) # 用于存储每个ID的特征列表
+    features_all, labels_all, fnames_all, camids_all = extract_features(model, data_loader) # 提取所有特征和标签
+    for feature, pid in zip(features_all, labels_all): 
+        pid2features[pid].append(feature) # 按ID收集特征
+
+    # 计算每个ID的类中心 (返回dict: {global_pid: center})
+    centers = {}
+    for pid, feats in pid2features.items():
+        center = torch.stack(feats).mean(0)
+        centers[pid] = F.normalize(center, dim=0).float().cuda()
+    return centers
+    # class_centers = [torch.stack(pid2features[pid]).mean(0) for pid in sorted(pid2features.keys())] # 计算每个ID的类中心
+    # class_centers = torch.stack(class_centers) # 堆叠成张量
+    # return F.normalize(class_centers, dim=1).float().cuda() # 归一化并转为CUDA张量
 
 def obtain_voronoi_loader(dataset,new_labels, add_num=0, batch_size = 32,num_instance=4,workers=8):
     normalizer = T.Normalize(mean=[0.485, 0.456, 0.406],
@@ -68,16 +76,18 @@ def obtain_voronoi_loader(dataset,new_labels, add_num=0, batch_size = 32,num_ins
     # new_labels.sort()
 
     return voronoi_loader, voronoi_set
+
+# 考虑特征不确定性的特征提取函数
 def extract_features_uncertain(model, data_loader, get_mean_feature=False):
-    features_all = []
-    labels_all = []
-    fnames_all = []
-    camids_all = []
-    var_all=[]
-    model.train()
-    with torch.no_grad():
-        for i, (imgs, fnames, pids, cids, domains) in enumerate(data_loader):
-            mean_feat, merge_feat, cls_outputs, out_var,_ = model(imgs)
+    features_all = [] # 存储所有特征
+    labels_all = [] # 存储所有标签
+    fnames_all = [] # 存储所有文件名
+    camids_all = [] # 存储所有相机ID
+    var_all=[] # 存储所有不确定性
+    model.train() # 设置模型为训练模式，启用dropout
+    with torch.no_grad(): # 不计算梯度
+        for i, (imgs, fnames, pids, cids) in enumerate(data_loader): # 遍历数据加载器
+            mean_feat, merge_feat, cls_outputs, out_var,_ = model(imgs) # 前向传播，获得均值特征，融合特征，分类输出，不确定性
             for fname, feature, pid, cid, var in zip(fnames, mean_feat, pids, cids,out_var):
                 features_all.append(feature)
                 labels_all.append(int(pid))
@@ -91,28 +101,29 @@ def extract_features_uncertain(model, data_loader, get_mean_feature=False):
         features_collect = {}
         var_collect = {}
 
-        for feature, label, var in zip(features_all, labels_all,var_all):
-            if label in features_collect:
-                features_collect[label].append(feature)
+        for feature, label, var in zip(features_all, labels_all,var_all): # 按标签收集特征和方差列表
+            if label in features_collect: # 如果标签已存在，添加特征
+                features_collect[label].append(feature) 
                 var_collect[label].append(var)
             else:
                 features_collect[label] = [feature]
-                var_collect[label]=[var]
-        labels_named = list(set(labels_all))  # obtain valid features
-        labels_named.sort()
-        features_mean=[]
-        vars_mean=[]
+                var_collect[label]=[var] 
+        labels_named = list(set(labels_all))  # obtain valid features # 得到所有标签
+        labels_named.sort() # 排序标签
+        features_mean=[] # 存储均值特征
+        vars_mean=[] # 存储均值方差
         for x in labels_named:
             if x in features_collect.keys():
-                feats=torch.stack(features_collect[x])
-                feat_mean=feats.mean(dim=0)
-                features_mean.append(feat_mean)
+                feats=torch.stack(features_collect[x])  # 堆叠成张量
+                feat_mean=feats.mean(dim=0) # 计算均值
+                features_mean.append(feat_mean) # 添加均值特征
 
                 vars_2=(torch.stack(var_collect[x])**2).mean(dim=0)+(feats**2).mean(dim=0)-feat_mean**2
-                vars_mean.append(torch.sqrt(vars_2))
+                vars_mean.append(torch.sqrt(vars_2)) # 添加均值方差
             else:
-                features_mean.append(torch.zeros_like(features_all[0]))
-                vars_mean.append(torch.zeros_like(var_all[0]))
+                features_mean.append(torch.zeros_like(features_all[0])) # 如果标签不存在，添加零向量
+                vars_mean.append(torch.zeros_like(var_all[0])) # 如果标签不存在，添加零向量
+         # 返回 所有特征 所有标签 所有文件名 所有相机ID 均值特征 标签列表 均值方差 所有方差
         return features_all, labels_all, fnames_all, camids_all, torch.stack(features_mean),labels_named,torch.stack(vars_mean),var_all
     else:
         return features_all, labels_all, fnames_all, camids_all

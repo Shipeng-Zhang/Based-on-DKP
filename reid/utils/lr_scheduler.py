@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import *
 # separating MultiStepLR with WarmupLR
 # but the current LRScheduler design doesn't allow it
 
+# 自定义的学习率调整策略，先预热再多步调整
 class WarmupMultiStepLR(torch.optim.lr_scheduler._LRScheduler):
     def __init__(
         self,
@@ -45,13 +46,13 @@ class WarmupMultiStepLR(torch.optim.lr_scheduler._LRScheduler):
         warmup_factor = 1
         if self.last_epoch < self.warmup_iters:
             if self.warmup_method == "constant":
-                warmup_factor = self.warmup_factor
+                warmup_factor = self.warmup_factor # 常数预热
             elif self.warmup_method == "linear":
                 alpha = float(self.last_epoch) / float(self.warmup_iters)
-                warmup_factor = self.warmup_factor * (1 - alpha) + alpha
+                warmup_factor = self.warmup_factor * (1 - alpha) + alpha # 线性预热
         return [
-            base_lr
-            * warmup_factor
+            base_lr # 基础学习率
+            * warmup_factor # 预热因子
             * self.gamma ** bisect_right(self.milestones, self.last_epoch)
             for base_lr in self.base_lrs
         ]
